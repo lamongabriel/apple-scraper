@@ -1,0 +1,32 @@
+services:
+  scraper:
+    build: .
+    restart: unless-stopped
+    platform: linux/amd64   # Google Chrome has no Linux arm64 build
+    environment:
+      ZIP_CODE: ${ZIP_CODE:-03103}
+      CHECK_INTERVAL: ${CHECK_INTERVAL:-120}
+      RENOTIFY_SECONDS: ${RENOTIFY_SECONDS:-1800}
+      WAHA_URL: http://waha:3000
+      WAHA_API_KEY: ${WAHA_API_KEY}
+      WAHA_SESSION: default
+      NOTIFY_ON_NOT_FOUND: ${NOTIFY_ON_NOT_FOUND:-false}
+      WHATSAPP_TO: ${WHATSAPP_TO:-5524999127331}
+    depends_on: [waha]
+
+  waha:
+    image: devlikeapro/waha
+    restart: unless-stopped
+    environment:
+      WHATSAPP_API_KEY: ${WAHA_API_KEY}
+      WAHA_DASHBOARD_USERNAME: admin
+      WAHA_DASHBOARD_PASSWORD: ${WAHA_DASHBOARD_PASSWORD}
+      WHATSAPP_RESTART_ALL_SESSIONS: "True"
+      WHATSAPP_START_SESSION: default
+    volumes:
+      - waha_sessions:/app/.sessions
+    ports:
+      - "3000"   # expose via a Coolify domain only while pairing, then remove
+
+volumes:
+  waha_sessions:
