@@ -3,12 +3,11 @@
 
 Runs headless real Chrome via Playwright (Apple 541s plain HTTP clients), calls
 Apple's fulfillment endpoint from inside the page, logs to stdout, and sends a
-WhatsApp message through a WAHA server when stock appears.
+push notification through ntfy when stock appears.
 
 Config via env vars (or flags): see .env.example.
 """
 import argparse
-import json
 import logging
 import os
 import re
@@ -33,26 +32,6 @@ FETCH_JS = """async ([zip, parts]) => {
 }"""
 
 
-def send_whatsapp(text):
-    """Send via a WAHA (WhatsApp HTTP API) server. No-op if not configured."""
-    base, chat = os.environ.get("WAHA_URL"), os.environ.get("WHATSAPP_TO")
-    if not base or not chat:
-        log.warning("WhatsApp not configured (WAHA_URL / WHATSAPP_TO); would have sent: %s", text)
-        return
-    chat_id = chat if "@" in chat else f"{re.sub(r'\D', '', chat)}@c.us"
-    headers = {"content-type": "application/json"}
-    if os.environ.get("WAHA_API_KEY"):
-        headers["X-Api-Key"] = os.environ["WAHA_API_KEY"]
-    body = json.dumps({"chatId": chat_id, "text": text,
-                       "session": os.environ.get("WAHA_SESSION", "default")}).encode()
-    try:
-        req = urllib.request.Request(f"{base.rstrip('/')}/api/sendText", body, headers)
-        urllib.request.urlopen(req, timeout=20).read()
-        log.info("WhatsApp sent")
-    except Exception as e:
-        log.error("WhatsApp send failed: %s", e)
-
-
 def send_ntfy(text, urgent):
     """Real push notification via ntfy (https://ntfy.sh or self-hosted). No-op if unset."""
     topic = os.environ.get("NTFY_TOPIC")
@@ -74,9 +53,8 @@ def send_ntfy(text, urgent):
 
 
 def notify(text, urgent=False):
-    """Send through every configured channel."""
+    """Send a notification."""
     send_ntfy(text, urgent)
-    send_whatsapp(text)
 
 
 def discover_parts(page):

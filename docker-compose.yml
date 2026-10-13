@@ -7,27 +7,5 @@ services:
       ZIP_CODE: ${ZIP_CODE:-03103}
       CHECK_INTERVAL: ${CHECK_INTERVAL:-120}
       RENOTIFY_SECONDS: ${RENOTIFY_SECONDS:-1800}
-      WAHA_URL: http://waha:3000
-      WAHA_API_KEY: ${WAHA_API_KEY}
-      WAHA_SESSION: default
       NOTIFY_ON_NOT_FOUND: ${NOTIFY_ON_NOT_FOUND:-false}
       NTFY_TOPIC: ${NTFY_TOPIC}
-      WHATSAPP_TO: ${WHATSAPP_TO:-5524999127331}
-    depends_on: [waha]
-
-  waha:
-    image: devlikeapro/waha
-    restart: unless-stopped
-    environment:
-      WHATSAPP_API_KEY: ${WAHA_API_KEY}
-      WAHA_DASHBOARD_USERNAME: admin
-      WAHA_DASHBOARD_PASSWORD: ${WAHA_DASHBOARD_PASSWORD}
-      WHATSAPP_RESTART_ALL_SESSIONS: "True"
-      WHATSAPP_START_SESSION: default
-    volumes:
-      - waha_sessions:/app/.sessions
-    expose:
-      - "3000"   # give this service a Coolify domain like https://apple.example.com:3000 while pairing
-
-volumes:
-  waha_sessions:
