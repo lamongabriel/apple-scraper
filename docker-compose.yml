@@ -11,6 +11,7 @@ services:
       WAHA_API_KEY: ${WAHA_API_KEY}
       WAHA_SESSION: default
       NOTIFY_ON_NOT_FOUND: ${NOTIFY_ON_NOT_FOUND:-false}
+      NTFY_TOPIC: ${NTFY_TOPIC}
       WHATSAPP_TO: ${WHATSAPP_TO:-5524999127331}
     depends_on: [waha]
 
@@ -25,8 +26,8 @@ services:
       WHATSAPP_START_SESSION: default
     volumes:
       - waha_sessions:/app/.sessions
-    ports:
-      - "3000"   # expose via a Coolify domain only while pairing, then remove
+    expose:
+      - "3000"   # give this service a Coolify domain like https://apple.example.com:3000 while pairing
 
 volumes:
   waha_sessions:

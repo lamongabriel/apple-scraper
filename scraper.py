@@ -53,6 +53,32 @@ def send_whatsapp(text):
         log.error("WhatsApp send failed: %s", e)
 
 
+def send_ntfy(text, urgent):
+    """Real push notification via ntfy (https://ntfy.sh or self-hosted). No-op if unset."""
+    topic = os.environ.get("NTFY_TOPIC")
+    if not topic:
+        return
+    base = os.environ.get("NTFY_URL", "https://ntfy.sh").rstrip("/")
+    headers = {"Title": "iPhone 18 Pro Max in stock!" if urgent else "Apple scraper",
+               "Priority": "urgent" if urgent else "default",
+               "Tags": "iphone,rotating_light" if urgent else "information_source",
+               "Click": BUY_URL.format(color=COLORS[0])}
+    if os.environ.get("NTFY_TOKEN"):
+        headers["Authorization"] = f"Bearer {os.environ['NTFY_TOKEN']}"
+    try:
+        req = urllib.request.Request(f"{base}/{topic}", text.encode(), headers)
+        urllib.request.urlopen(req, timeout=20).read()
+        log.info("ntfy push sent")
+    except Exception as e:
+        log.error("ntfy send failed: %s", e)
+
+
+def notify(text, urgent=False):
+    """Send through every configured channel."""
+    send_ntfy(text, urgent)
+    send_whatsapp(text)
+
+
 def discover_parts(page):
     """Map color -> part number by reading each color's buy page."""
     parts = {}
@@ -130,18 +156,18 @@ def main():
                 else:
                     log.info("Not available at any of %d stores", n)
                     if env("NOTIFY_ON_NOT_FOUND", "false").lower() in ("1", "true", "yes"):
-                        send_whatsapp(f"Check done: nothing available at {n} stores near {args.zip}.")
+                        notify(f"Check done: nothing available at {n} stores near {args.zip}.")
                 if fresh:
                     for k in hits:
                         notified[k] = now
-                    send_whatsapp("📱 iPhone 18 Pro Max 256GB available for pickup:\n- "
-                                  + "\n- ".join(fresh))
+                    notify("iPhone 18 Pro Max 256GB available for pickup:\n- "
+                           + "\n- ".join(fresh), urgent=True)
             except Exception as e:
                 fail_streak += 1
                 log.error("check failed (%d in a row): %s", fail_streak, e)
                 if fail_streak >= 5 and not alerted_down:
                     alerted_down = True
-                    send_whatsapp("⚠️ Apple scraper: 5 failed checks in a row (likely blocked).")
+                    notify("Apple scraper: 5 failed checks in a row (likely blocked).")
                 if fail_streak % 3 == 0:  # reset browser state / profile
                     browser.close()
                     browser, ctx = launch(p, not args.headed)
