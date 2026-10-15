@@ -13,6 +13,7 @@ import os
 import re
 import sys
 import time
+import urllib.parse
 import urllib.request
 
 from playwright.sync_api import sync_playwright
@@ -87,8 +88,15 @@ def find_hits(page, zip_code, parts):
 
 def launch(p, headless):
     """Real Chrome; headless Chrome advertises 'HeadlessChrome' in its UA, which Apple blocks."""
+    proxy = None
+    if os.environ.get("PROXY_URL"):  # e.g. http://user:pass@host:port (residential proxy)
+        u = urllib.parse.urlparse(os.environ["PROXY_URL"])
+        proxy = {"server": f"{u.scheme}://{u.hostname}:{u.port}"}
+        if u.username:
+            proxy.update(username=urllib.parse.unquote(u.username),
+                         password=urllib.parse.unquote(u.password or ""))
     browser = p.chromium.launch(
-        channel="chrome", headless=headless,
+        channel="chrome", headless=headless, proxy=proxy,
         ignore_default_args=["--enable-automation"],
         args=["--disable-blink-features=AutomationControlled", "--no-sandbox"])
     probe = browser.new_page()
