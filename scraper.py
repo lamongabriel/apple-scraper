@@ -10,7 +10,7 @@ Config via env vars (or flags): see .env.example.
 import argparse
 import logging
 import os
-import re
+import random
 import sys
 import time
 import urllib.parse
@@ -22,7 +22,8 @@ log = logging.getLogger("scraper")
 
 BUY_URL = "https://www.apple.com/shop/buy-iphone/iphone-18-pro/6.9-inch-display-256gb-{color}-unlocked"
 COLORS = ["black", "burgundy", "glacier", "silver"]
-PART_RE = re.compile(r'name="product"[^>]*value="(M[A-Z0-9]{4}LL/A)"|value="(M[A-Z0-9]{4}LL/A)"[^>]*name="product"')
+# 256GB iPhone 18 Pro Max part numbers (looked up from each color's buy page)
+PARTS = {"black": "MJW44LL/A", "burgundy": "MJW64LL/A", "glacier": "MJW74LL/A", "silver": "MJW54LL/A"}
 
 FETCH_JS = """async ([zip, parts]) => {
   const q = new URLSearchParams({pl: 'true', 'mts.0': 'regular', 'mts.1': 'compact', location: zip});
@@ -56,21 +57,6 @@ def send_ntfy(text, urgent):
 def notify(text, urgent=False):
     """Send a notification."""
     send_ntfy(text, urgent)
-
-
-def discover_parts(page):
-    """Map color -> part number by reading each color's buy page."""
-    parts = {}
-    for color in COLORS:
-        page.goto(BUY_URL.format(color=color), wait_until="domcontentloaded")
-        page.wait_for_selector('input[name="product"][value*="LL/A"]', state="attached", timeout=30000)
-        m = PART_RE.search(page.content())
-        if m:
-            parts[color] = m.group(1) or m.group(2)
-    # let Apple's bot-protection scripts finish setting cookies before we call the API
-    page.goto(BUY_URL.format(color=COLORS[0]), wait_until="load")
-    page.wait_for_timeout(8000)
-    return parts
 
 
 def find_hits(page, zip_code, parts):
@@ -107,6 +93,44 @@ def launch(p, headless):
     return browser, ctx
 
 
+class Session:
+    """A browser session warmed up on an Apple page so bot-protection cookies are set."""
+
+    def __init__(self, p, headless):
+        self.p, self.headless = p, headless
+        self.browser = self.page = None
+
+    def start(self):
+        self.close()
+        self.browser, ctx = launch(self.p, self.headless)
+        self.page = ctx.new_page()
+        self.page.goto(BUY_URL.format(color=COLORS[0]), wait_until="load")
+        self.page.wait_for_timeout(8000)
+
+    def close(self):
+        if self.browser:
+            try:
+                self.browser.close()
+            except Exception:
+                pass
+            self.browser = self.page = None
+
+
+def check_with_retries(sess, zip_code, parts, attempts=3):
+    """Apple randomly 541s; retry on a brand-new browser session before giving up."""
+    for i in range(1, attempts + 1):
+        try:
+            if sess.page is None:
+                sess.start()
+            return find_hits(sess.page, zip_code, parts)
+        except Exception as e:
+            log.warning("attempt %d/%d failed: %s", i, attempts, str(e).splitlines()[0])
+            sess.close()
+            if i == attempts:
+                raise
+            time.sleep(random.uniform(10, 30) * i)
+
+
 def main():
     env = os.environ.get
     ap = argparse.ArgumentParser()
@@ -121,19 +145,18 @@ def main():
     notified = {}        # (color, store) -> last notify time
     renotify = int(env("RENOTIFY_SECONDS", "1800"))
     fail_streak, alerted_down = 0, False
+    session_started = 0.0
 
     with sync_playwright() as p:
-        browser, ctx = launch(p, not args.headed)
-        page = ctx.new_page()
-        parts = None
+        sess = Session(p, not args.headed)
         while True:
             try:
-                if parts is None:
-                    parts = discover_parts(page)
-                    log.info("Tracking %s near %s", parts, args.zip)
-                n, hits = find_hits(page, args.zip, parts)
+                if time.time() - session_started > 1800:   # refresh cookies every 30 min
+                    sess.close()
+                    session_started = time.time()
+                n, hits = check_with_retries(sess, args.zip, PARTS)
                 if fail_streak:
-                    log.info("Recovered after %d failures", fail_streak)
+                    log.info("Recovered after %d failed cycles", fail_streak)
                 fail_streak, alerted_down = 0, False
                 now = time.time()
                 fresh = [t for k, t in hits.items() if now - notified.get(k, 0) > renotify]
@@ -150,23 +173,16 @@ def main():
                            + "\n- ".join(fresh), urgent=True)
             except Exception as e:
                 fail_streak += 1
-                log.error("check failed (%d in a row): %s", fail_streak, e)
+                log.error("cycle failed (%d in a row): %s", fail_streak, str(e).splitlines()[0])
                 if fail_streak >= 5 and not alerted_down:
                     alerted_down = True
-                    notify("Apple scraper: 5 failed checks in a row (likely blocked).")
-                if fail_streak % 3 == 0:  # reset browser state / profile
-                    browser.close()
-                    browser, ctx = launch(p, not args.headed)
-                    page = ctx.new_page()
-                    parts = None
-                try:
-                    page.goto(BUY_URL.format(color=COLORS[0]), wait_until="domcontentloaded")
-                except Exception:
-                    pass
+                    notify("Apple scraper: 5 failed cycles in a row (likely blocked).")
             if not args.interval:
                 break
-            time.sleep(args.interval)
-        browser.close()
+            # jitter so requests don't look machine-regular; back off while failing
+            wait = args.interval * random.uniform(0.8, 1.3) * min(1 + fail_streak, 5)
+            time.sleep(wait)
+        sess.close()
 
 
 if __name__ == "__main__":
